@@ -1,0 +1,14 @@
+{
+  "name": "@seltra/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "viem": "^2.18.8"
+  }
+}

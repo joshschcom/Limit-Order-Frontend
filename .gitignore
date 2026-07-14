@@ -1,0 +1,13 @@
+.next
+node_modules
+out
+dist
+.env*.local
+*.tsbuildinfo
+
+
+# orderbook-api local storage
+services/orderbook-api/data/
+services/orderbook-api/.env
+docs
+.claude

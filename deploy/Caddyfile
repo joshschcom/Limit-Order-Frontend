@@ -1,0 +1,13 @@
+# Seltra reverse proxy — Caddy terminates TLS (automatic Let's Encrypt).
+# Replace YOURDOMAIN with your real domain before use.
+# WebSocket upgrade for /stream is handled automatically by reverse_proxy.
+
+app.YOURDOMAIN {
+	encode gzip
+	reverse_proxy 127.0.0.1:3000
+}
+
+api.YOURDOMAIN {
+	encode gzip
+	reverse_proxy 127.0.0.1:8080
+}

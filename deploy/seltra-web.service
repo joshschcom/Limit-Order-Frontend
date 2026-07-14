@@ -1,0 +1,23 @@
+# /etc/systemd/system/seltra-web.service
+[Unit]
+Description=Seltra Next.js frontend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=seltra
+WorkingDirectory=/home/seltra/seltra
+ExecStart=/usr/bin/npx next start
+Restart=always
+RestartSec=3
+Environment=NODE_ENV=production
+Environment=PORT=3000
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

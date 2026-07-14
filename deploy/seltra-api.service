@@ -1,0 +1,23 @@
+# /etc/systemd/system/seltra-api.service
+[Unit]
+Description=Seltra orderbook API + indexer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=seltra
+WorkingDirectory=/home/seltra/seltra/services/orderbook-api
+ExecStart=/usr/bin/npx tsx src/index.ts
+Restart=always
+RestartSec=3
+Environment=NODE_ENV=production
+# All other config comes from services/orderbook-api/.env (see .env.production.example)
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

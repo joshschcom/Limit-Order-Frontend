@@ -1,0 +1,22 @@
+{
+  "name": "@seltra/orderbook-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@seltra/sdk": "*",
+    "viem": "^2.18.8",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/ws": "^8.5.12",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.3"
+  }
+}
