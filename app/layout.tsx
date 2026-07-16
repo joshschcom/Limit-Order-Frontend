@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     type: "website",
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     title: "Seltra — wallet-native limit orders on Avalanche",
     description:
       "Gasless signed orders, filled by aggregated DEX liquidity or matched trader-to-trader. Your price or better.",

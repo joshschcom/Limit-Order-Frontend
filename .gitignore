@@ -12,5 +12,7 @@ services/orderbook-api/.env
 
 # internal docs (specs, readiness plan, briefs, deploy guide) never leave this machine
 docs/
+# raw brand assets; web-ready exports go to public/ when wired in
+images/
 
 .claude
