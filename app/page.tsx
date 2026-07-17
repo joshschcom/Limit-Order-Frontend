@@ -11,7 +11,7 @@ export default function HomePage() {
     <div className="landing-shell">
       <header className="landing-nav">
         <Link className="brand" href="/" aria-label="Seltra home"><SeltraMark className="brand-mark" /><span className="brand-word">Seltra</span>{seltraConfig.chainId === 43113 ? <span className="testnet-tag">Testnet</span> : null}</Link>
-        <nav aria-label="Site navigation"><Link href="/stats">Stats</Link><a href="https://github.com/Seltra-Finance" target="_blank" rel="noreferrer">GitHub</a></nav>
+        <nav aria-label="Site navigation"><Link href="/docs">Docs</Link><Link href="/stats">Stats</Link><a href="https://github.com/Seltra-Finance" target="_blank" rel="noreferrer">GitHub</a></nav>
         <div className="landing-actions"><ThemeToggle /><Link className="button accent" href={defaultTradePath}>Open app <ArrowUpRight size={16} /></Link></div>
       </header>
       <main>
