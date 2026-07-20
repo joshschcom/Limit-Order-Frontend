@@ -47,10 +47,12 @@ export function buildOrder(params: {
   takingAmount: bigint;
   epoch: bigint;
   expirySeconds: number;
+  /** Absolute expiry (unix seconds); overrides expirySeconds so batch children share one expiry. */
+  expiryAt?: bigint;
   allowedSender?: Address;
 }): { order: Order; permit: Permit2Data } {
   const now = BigInt(Math.floor(Date.now() / 1000));
-  const expiry = now + BigInt(params.expirySeconds);
+  const expiry = params.expiryAt ?? now + BigInt(params.expirySeconds);
   const order: Order = {
     maker: params.maker,
     receiver: params.receiver ?? params.maker,

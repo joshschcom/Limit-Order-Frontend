@@ -6,5 +6,6 @@ export * from "./permit2";
 export * from "./serialize";
 export * from "./validation";
 export * from "./surplus";
+export * from "./grid";
 export * from "./api";
 export { maxUint256 } from "viem";

@@ -4,13 +4,49 @@ import { AlertTriangle, CheckCircle2, ChevronDown, Loader2, PenLine, ShieldCheck
 import { useState } from "react";
 import { formatToken } from "@/lib/format";
 import type { OrderEntryMachine } from "@/hooks/use-order-entry-machine";
+import { GridOrderForm } from "@/components/grid-order-form";
+import { InfoTip } from "@/components/info-tip";
 
 export function OrderForm({ machine: m, midPrice }: { machine: OrderEntryMachine; midPrice?: number }) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  // Grid is a batch flow with its own machine; the tab is local so the
+  // single-order machine stays untouched while it is open.
+  const [gridOpen, setGridOpen] = useState(false);
   const { pair, base, quote, makerAsset, takerAsset, state } = m;
   const setQuickPrice = (factor: number) => {
     if (midPrice) m.setPrice((midPrice * factor).toFixed(pair.pricePrecision));
   };
+  const pickKind = (kind: "limit" | "market") => {
+    setGridOpen(false);
+    m.setKind(kind);
+  };
+
+  if (gridOpen) {
+    return (
+      <section className="panel order-form flow-grid" aria-busy={false}>
+        <div className="panel-head">
+          <div>
+            <p className="eyebrow">Order entry</p>
+            <h2>
+              Grid bot{" "}
+              <InfoTip>
+                A grid places a ladder of limit orders across your price range: buys below the current price, sells
+                above it. When the market crosses a level, that order fills once at its price or better. Filled levels
+                stay filled — nothing is re-placed automatically. Every level is a normal gasless Seltra limit order,
+                signed individually in your wallet, and you can cancel any of them at any time.
+              </InfoTip>
+            </h2>
+          </div>
+        </div>
+        <div className="order-kind-tabs" role="tablist" aria-label="Order type">
+          <button type="button" role="tab" aria-selected={false} onClick={() => pickKind("limit")}>Limit</button>
+          <button type="button" role="tab" aria-selected={false} onClick={() => pickKind("market")}>Market</button>
+          <button className="active" type="button" role="tab" aria-selected>Bot</button>
+        </div>
+        <GridOrderForm pairId={pair.id} referencePrice={m.referencePrice ?? midPrice} />
+      </section>
+    );
+  }
 
   return (
     <section className={`panel order-form flow-${state.tag} ${m.isConnected && !m.wrongNetwork ? `side-${m.side}` : ""}`} aria-busy={m.busy}>
@@ -21,9 +57,9 @@ export function OrderForm({ machine: m, midPrice }: { machine: OrderEntryMachine
         </div>
       </div>
       <div className="order-kind-tabs" role="tablist" aria-label="Order type">
-        <button className={m.kind === "limit" ? "active" : ""} type="button" role="tab" aria-selected={m.kind === "limit"} onClick={() => m.setKind("limit")}>Limit</button>
-        <button className={m.kind === "market" ? "active" : ""} type="button" role="tab" aria-selected={m.kind === "market"} onClick={() => m.setKind("market")}>Market</button>
-        <button type="button" role="tab" disabled title="Available after V1">Swap</button>
+        <button className={m.kind === "limit" ? "active" : ""} type="button" role="tab" aria-selected={m.kind === "limit"} onClick={() => pickKind("limit")}>Limit</button>
+        <button className={m.kind === "market" ? "active" : ""} type="button" role="tab" aria-selected={m.kind === "market"} onClick={() => pickKind("market")}>Market</button>
+        <button type="button" role="tab" aria-selected={false} onClick={() => setGridOpen(true)}>Bot</button>
       </div>
       <div className="side-tabs">
         <button className={m.side === "buy" ? "active buy-tab" : ""} type="button" onClick={() => m.setSide("buy")}>

@@ -12,6 +12,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit && npm run typecheck --workspace @seltra/orderbook-api",
+    "test": "tsx --test packages/sdk/src/*.test.ts",
     "lint": "next lint",
     "api": "npm run dev --workspace @seltra/orderbook-api",
     "docs:index": "node scripts/build-docs-search.mjs",

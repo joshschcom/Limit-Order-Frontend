@@ -1,11 +1,12 @@
 "use client";
 
-import { AlertTriangle, ExternalLink, ListFilter, Loader2, WalletMinimal, WifiOff, X } from "lucide-react";
+import { AlertTriangle, ExternalLink, Grid3x3, ListFilter, Loader2, WalletMinimal, WifiOff, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { formatUnits } from "viem";
-import type { OrderRecord } from "@seltra/sdk";
+import { GRID_CANCEL_ALL_WARNING, type GridManifest, type OrderRecord } from "@seltra/sdk";
 import { pairById, defaultTradePath, tokenBySymbol } from "@/config/seltra.config";
 import { CANCEL_ALL, useCancelOrders } from "@/hooks/use-cancel-orders";
+import { useGridManifests } from "@/lib/grid-manifests";
 import { formatCountdown, useNowSeconds } from "@/lib/market-data";
 import { NumberText } from "@/components/number-text";
 
@@ -21,7 +22,14 @@ export function fillImprovement(order: OrderRecord): { amount: number; symbol: s
   return amount > 0 ? { amount, symbol: receiveSymbol } : null;
 }
 
-type ConfirmState = { kind: "single"; record: OrderRecord } | { kind: "all" } | null;
+type ConfirmState = { kind: "single"; record: OrderRecord } | { kind: "all" } | { kind: "grid"; gridId: string } | null;
+
+interface GridGroup {
+  manifest: GridManifest;
+  members: OrderRecord[];
+  openCount: number;
+  filledCount: number;
+}
 
 export function OrdersTable({
   orders,
@@ -47,6 +55,26 @@ export function OrdersTable({
   }, [orders, view]);
   const openCount = useMemo(() => orders.filter((order) => OPEN_STATUSES.has(order.status)).length, [orders]);
   const cancelAllPhase = cancels.pending[CANCEL_ALL];
+  const manifests = useGridManifests();
+  // Grids are local manifests joined against the API's order records; only
+  // grids with at least one known order are shown.
+  const gridGroups: GridGroup[] = useMemo(() => {
+    if (manifests.length === 0) return [];
+    const byHash = new Map(orders.map((order) => [order.orderHash.toLowerCase(), order]));
+    return manifests
+      .map((manifest) => {
+        const members = manifest.orderHashes
+          .map((hash) => byHash.get(hash.toLowerCase()))
+          .filter((order): order is OrderRecord => Boolean(order));
+        return {
+          manifest,
+          members,
+          openCount: members.filter((order) => OPEN_STATUSES.has(order.status)).length,
+          filledCount: members.filter((order) => order.status === "filled").length,
+        };
+      })
+      .filter((group) => group.members.length > 0);
+  }, [orders, manifests]);
 
   function requestCancelAll() {
     cancels.clearError();
@@ -60,7 +88,9 @@ export function OrdersTable({
 
   function confirmed() {
     if (!confirm) return;
-    if (confirm.kind === "all") void cancels.cancelAll();
+    // "grid" also uses incrementEpoch — the on-chain primitive is wallet-wide,
+    // which is exactly what the confirm dialog warns about.
+    if (confirm.kind === "all" || confirm.kind === "grid") void cancels.cancelAll();
     else void cancels.cancelOrder(confirm.record);
     setConfirm(null);
   }
@@ -91,6 +121,37 @@ export function OrdersTable({
       </div>
       <div className="orders-tabs" role="tablist" aria-label="Orders view"><button className={view === "open" ? "active" : ""} type="button" role="tab" aria-selected={view === "open"} onClick={() => setView("open")}>Open orders</button><button className={view === "history" ? "active" : ""} type="button" role="tab" aria-selected={view === "history"} onClick={() => setView("history")}>History</button><button className={view === "balances" ? "active" : ""} type="button" role="tab" aria-selected={view === "balances"} onClick={() => setView("balances")}>Balances</button></div>
       {cancels.error ? <p className="form-error"><AlertTriangle size={14} /> {cancels.error}</p> : null}
+      {view === "open" && gridGroups.length > 0 ? (
+        <div className="grid-groups" aria-label="Grids">
+          {gridGroups.map((group) => (
+            <div key={group.manifest.gridId} className="grid-group">
+              <Grid3x3 size={15} />
+              <div className="grid-group-info">
+                <strong>Grid {group.manifest.gridId.slice(2, 8)} · {group.manifest.pairId}</strong>
+                <span>
+                  {group.manifest.config.lowerPrice}–{group.manifest.config.upperPrice} · {group.members.length} orders
+                  {" · "}{group.openCount} open · {group.filledCount} filled
+                  {group.manifest.failedLevels.length > 0 ? ` · ${group.manifest.failedLevels.length} never placed` : ""}
+                </span>
+              </div>
+              {group.openCount > 0 ? (
+                <button
+                  className="button outline"
+                  type="button"
+                  disabled={!cancels.canCancel || cancelAllPhase !== undefined}
+                  onClick={() => {
+                    cancels.clearError();
+                    setConfirm({ kind: "grid", gridId: group.manifest.gridId });
+                  }}
+                >
+                  {cancelAllPhase ? <Loader2 className="spin" size={13} /> : null}
+                  Cancel entire grid
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
       {view === "balances" ? <BalancesEmpty /> : null}
       {view !== "balances" && isLoading ? <OrdersLoading /> : null}
       {view !== "balances" && !isLoading && visibleOrders.length === 0 ? <OrdersEmpty isConnected={isConnected} /> : null}
@@ -123,7 +184,9 @@ export function OrdersTable({
           message={
             confirm.kind === "all"
               ? "One transaction. Invalidates every open Seltra order from this wallet."
-              : "Cancels this order on-chain. Costs one transaction."
+              : confirm.kind === "grid"
+                ? GRID_CANCEL_ALL_WARNING
+                : "Cancels this order on-chain. Costs one transaction."
           }
           onConfirm={confirmed}
           onClose={() => setConfirm(null)}
