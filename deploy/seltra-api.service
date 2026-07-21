@@ -12,7 +12,7 @@ ExecStart=/usr/bin/npx tsx src/index.ts
 Restart=always
 RestartSec=3
 Environment=NODE_ENV=production
-# All other config comes from services/orderbook-api/.env (see .env.production.example)
+EnvironmentFile=/etc/seltra/orderbook-api.env
 
 # Hardening
 NoNewPrivileges=true

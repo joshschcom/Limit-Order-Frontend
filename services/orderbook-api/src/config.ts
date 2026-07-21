@@ -7,12 +7,19 @@ import { PERMIT2_ADDRESS, MAX_EXPIRY_SECONDS } from "@seltra/sdk";
 const zeroAddress = "0x0000000000000000000000000000000000000000" as Address;
 
 // Minimal .env loader (no dotenv dep): KEY=VALUE lines, # comments, real env wins.
+// ENV_FILE lets unprivileged maintenance commands load the same protected file
+// that systemd injects into the service process.
 try {
-  const raw = readFileSync(fileURLToPath(new URL("../.env", import.meta.url)), "utf8");
+  const envFile = process.env.ENV_FILE?.trim() || fileURLToPath(new URL("../.env", import.meta.url));
+  const raw = readFileSync(envFile, "utf8");
   for (const line of raw.split("\n")) {
     const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
     if (match && !line.trim().startsWith("#") && process.env[match[1]] === undefined) {
-      process.env[match[1]] = match[2];
+      const value = match[2];
+      process.env[match[1]] =
+        (value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))
+          ? value.slice(1, -1)
+          : value;
     }
   }
 } catch {
@@ -30,6 +37,17 @@ function env(name: string, fallback: string): string {
 // adapter/liquidity validation (readiness plan §6).
 const baseSymbol = env("BASE_SYMBOL", "sWAVAX");
 const quoteSymbol = env("QUOTE_SYMBOL", "sUSDC");
+const chainId = Number(env("CHAIN_ID", "43113"));
+const databaseUrl = process.env.DATABASE_URL?.trim() || undefined;
+if (chainId === 43_114 && !databaseUrl) {
+  throw new Error("Avalanche mainnet requires DATABASE_URL; SQLite is staging-only");
+}
+if (chainId === 43_114 && databaseUrl) {
+  const database = new URL(databaseUrl);
+  if (database.searchParams.get("sslmode") !== "verify-full" || !database.searchParams.get("sslrootcert")) {
+    throw new Error("Avalanche mainnet DATABASE_URL requires sslmode=verify-full and sslrootcert");
+  }
+}
 const pairs: PairConfig[] = [
   {
     id: `${baseSymbol}-${quoteSymbol}`,
@@ -46,7 +64,8 @@ const pairs: PairConfig[] = [
 
 export const config = {
   port: Number(env("PORT", "8080")),
-  chainId: Number(env("CHAIN_ID", "43113")),
+  chainId,
+  databaseUrl,
   permit2: env("PERMIT2", PERMIT2_ADDRESS) as Address,
   settlement: env("SETTLEMENT", zeroAddress) as Address,
   router: env("ROUTER", zeroAddress) as Address,
@@ -57,7 +76,7 @@ export const config = {
   quoteHistoryMax: Number(env("QUOTE_HISTORY_MAX", "20000")),
   rpcUrl: env("RPC_URL", "https://api.avax-test.network/ext/bc/C/rpc"),
   /** First block to scan when no checkpoint exists (settlement deploy era). */
-  startBlock: Number(env("START_BLOCK", "56800000")),
+  startBlock: Number(env("START_BLOCK", "57057712")),
   pollMs: Number(env("POLL_MS", "4000")),
   logChunk: Number(env("LOG_CHUNK", "2000")),
   maxExpirySeconds: Number(env("MAX_EXPIRY_SECONDS", String(MAX_EXPIRY_SECONDS))),
