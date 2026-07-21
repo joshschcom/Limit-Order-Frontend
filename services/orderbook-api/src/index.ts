@@ -14,12 +14,19 @@ import { ALLOWED_INTERVALS, buildCandles, buildTrades } from "./candles";
 import { ChainIndexer } from "./chain";
 import { config, pairById } from "./config";
 import { parseVenues, QuoteService } from "./quote";
-import { OrderStore } from "./store";
+import { createOrderStore } from "./store";
 import { StreamHub } from "./ws";
 
-const store = new OrderStore(config.dbFile, {
-  ordersJson: config.dataFile,
-  checkpointJson: config.checkpointFile,
+const store = await createOrderStore({
+  databaseUrl: config.databaseUrl,
+  dbFile: config.dbFile,
+  chainId: config.chainId,
+  quoteHistoryMax: config.quoteHistoryMax,
+  legacy: {
+    ordersJson: config.dataFile,
+    checkpointJson: config.checkpointFile,
+    quoteHistoryJson: config.quoteHistoryFile,
+  },
 });
 
 function json(res: ServerResponse, status: number, body: unknown) {
@@ -139,18 +146,18 @@ async function handleSubmit(req: IncomingMessage, res: ServerResponse) {
   record.price = price.toFixed(Math.max(match.pair.pricePrecision, 6));
   record.baseAmount = size.toString();
 
-  store.upsert(record);
+  await store.upsert(record);
   hub.broadcastBook(match.pair.id, buildBook(store.restingForPair(match.pair.id), match.pair));
   hub.broadcastUserOrder(record);
   return json(res, 201, { orderHash, status: record.status });
 }
 
-function handleSoftCancel(res: ServerResponse, hash: string) {
+async function handleSoftCancel(res: ServerResponse, hash: string) {
   const record = store.get(hash);
   if (!record) return json(res, 404, { error: "Order not found" });
   record.softCancelled = true;
   record.updatedAt = Date.now();
-  store.upsert(record);
+  await store.upsert(record);
   const pair = pairById(record.pair);
   if (pair) hub.broadcastBook(pair.id, buildBook(store.restingForPair(pair.id), pair));
   hub.broadcastUserOrder(record);
@@ -162,7 +169,9 @@ const server = createServer(async (req, res) => {
   const path = url.pathname.replace(/\/+$/, "") || "/";
   try {
     if (req.method === "OPTIONS") return json(res, 204, {});
-    if (req.method === "GET" && path === "/health") return json(res, 200, { ok: true, ts: Date.now() });
+    if (req.method === "GET" && path === "/health") {
+      return json(res, 200, { ok: true, ts: Date.now(), chainId: config.chainId, storage: store.backend });
+    }
     const ip = clientIp(req);
     if (!requestLimiter.allow(ip)) return json(res, 429, { error: "Too many requests", code: "RateLimited" });
     if (req.method === "POST" && path === "/orders") {
@@ -191,7 +200,7 @@ const server = createServer(async (req, res) => {
         const record = store.get(orderMatch[1]);
         return record ? json(res, 200, record) : json(res, 404, { error: "Order not found" });
       }
-      if (req.method === "DELETE") return handleSoftCancel(res, orderMatch[1]);
+      if (req.method === "DELETE") return await handleSoftCancel(res, orderMatch[1]);
     }
     const bookMatch = path.match(/^\/orderbook\/([A-Za-z0-9.-]+)$/);
     if (req.method === "GET" && bookMatch) {
@@ -243,6 +252,7 @@ const server = createServer(async (req, res) => {
         eventsApplied: store.eventCount(),
         indexing: indexer !== null,
         quoteAgeMs: quote ? Date.now() - quote.ts : null,
+        storage: store.backend,
       });
     }
     return json(res, 404, { error: "Not found" });
@@ -253,7 +263,7 @@ const server = createServer(async (req, res) => {
 });
 
 const hub = new StreamHub(server, store);
-const quotes = new QuoteService(parseVenues(config.venuesRaw));
+const quotes = new QuoteService(parseVenues(config.venuesRaw), store);
 quotes.start();
 
 function notifyRecordChanged(record: OrderRecord) {
@@ -276,15 +286,31 @@ if (config.settlement !== "0x0000000000000000000000000000000000000000") {
 }
 
 setInterval(() => {
-  const changed = store.sweepExpired(Math.floor(Date.now() / 1000));
-  if (changed.length === 0) return;
-  for (const record of changed) hub.broadcastUserOrder(record);
-  for (const pairId of new Set(changed.map((record) => record.pair))) {
-    const pair = pairById(pairId);
-    if (pair) hub.broadcastBook(pairId, buildBook(store.restingForPair(pairId), pair));
-  }
+  void store
+    .sweepExpired(Math.floor(Date.now() / 1000))
+    .then((changed) => {
+      if (changed.length === 0) return;
+      for (const record of changed) hub.broadcastUserOrder(record);
+      for (const pairId of new Set(changed.map((record) => record.pair))) {
+        const pair = pairById(pairId);
+        if (pair) hub.broadcastBook(pairId, buildBook(store.restingForPair(pairId), pair));
+      }
+    })
+    .catch((error) => console.error("expiry sweep failed", error));
 }, config.expirySweepMs).unref();
 
 server.listen(config.port, () => {
-  console.log(`seltra orderbook-api listening on :${config.port} (chain ${config.chainId})`);
+  console.log(`seltra orderbook-api listening on :${config.port} (chain ${config.chainId}, ${store.backend})`);
 });
+
+async function shutdown(signal: string) {
+  console.log(`received ${signal}; shutting down`);
+  indexer?.stop();
+  quotes.stop();
+  hub.close();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  await store.close();
+}
+
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
+process.once("SIGINT", () => void shutdown("SIGINT"));

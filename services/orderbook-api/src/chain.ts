@@ -14,7 +14,7 @@ import { config } from "./config";
 import type { OrderStore } from "./store";
 
 export const settlementEvents = parseAbi([
-  "event OrderFilledDEX(bytes32 indexed orderHash, address indexed maker, address indexed keeper, uint256 makingAmount, uint256 amountOut, uint256 makerImprovement, uint256 keeperReward)",
+  "event OrderFilledDEX(bytes32 indexed orderHash, address indexed maker, address indexed keeper, uint8 adapterId, uint256 makingAmount, uint256 amountOut, uint256 makerImprovement, uint256 keeperReward)",
   "event OrderFilledP2P(bytes32 indexed hashA, bytes32 indexed hashB, uint256 surplus, uint256 makerShareA, uint256 makerShareB, uint256 keeperReward)",
   "event EpochIncremented(address indexed maker, uint256 newEpoch)",
 ]);
@@ -59,8 +59,8 @@ type SettlementLog = Log<bigint, number, false, undefined, true, typeof settleme
  * Polls settlement events and reconciles order statuses: fills flip records to
  * `filled` with enrichment, EpochIncremented flips a maker's stale resting
  * orders to `cancelled`. Block checkpoint persists next to the order store so
- * restarts resume instead of re-scanning. Reorg-hardened Postgres ingestion
- * replaces this in the production indexer phase (readiness plan §8).
+ * restarts resume instead of re-scanning. The selected store persists both
+ * event identities and the finalized checkpoint in SQLite or PostgreSQL.
  */
 export class ChainIndexer {
   private client: PublicClient;
@@ -73,7 +73,7 @@ export class ChainIndexer {
     private readonly notify: (record: OrderRecord) => void,
   ) {
     this.client = createPublicClient({ transport: http(config.rpcUrl) });
-    this.checkpoint = store.getCheckpoint() ?? BigInt(config.startBlock);
+    this.checkpoint = store.getCheckpoint() ?? BigInt(config.startBlock) - 1n;
   }
 
   start() {
@@ -114,10 +114,10 @@ export class ChainIndexer {
         // (deleted checkpoint, overlapping scans) are always safe.
         if (log.logIndex !== null && this.store.isEventApplied(log.transactionHash, log.logIndex)) continue;
         await this.handle(log as SettlementLog);
-        if (log.logIndex !== null) this.store.markEventApplied(log.transactionHash, log.logIndex);
+        if (log.logIndex !== null) await this.store.markEventApplied(log.transactionHash, log.logIndex);
       }
       this.checkpoint = to;
-      this.store.setCheckpoint(to);
+      await this.store.setCheckpoint(to);
       from = to + 1n;
     }
   }
@@ -137,9 +137,10 @@ export class ChainIndexer {
 
   private async handle(log: SettlementLog) {
     if (log.eventName === "OrderFilledDEX") {
-      const { orderHash, amountOut, makerImprovement, keeperReward } = log.args;
+      const { orderHash, adapterId, amountOut, makerImprovement, keeperReward } = log.args;
       await this.markFilled(orderHash, {
         path: "dex",
+        adapterId: Number(adapterId),
         txHash: log.transactionHash,
         blockNumber: Number(log.blockNumber),
         timestamp: await this.blockTimestamp(log.blockNumber),
@@ -160,7 +161,7 @@ export class ChainIndexer {
       await this.markFilled(hashB, { ...common, makerImprovement: makerShareB.toString() });
     } else if (log.eventName === "EpochIncremented") {
       const { maker, newEpoch } = log.args;
-      const cancelled = this.store.cancelBelowEpoch(maker, newEpoch);
+      const cancelled = await this.store.cancelBelowEpoch(maker, newEpoch);
       for (const record of cancelled) this.notify(record);
       if (cancelled.length > 0) {
         console.log(`epoch ${newEpoch} for ${maker}: cancelled ${cancelled.length} order(s)`);
@@ -187,7 +188,7 @@ export class ChainIndexer {
     if (!used) return record;
     record.status = "cancelled";
     record.updatedAt = Date.now();
-    this.store.upsert(record);
+    await this.store.upsert(record);
     this.notify(record);
     console.log(`order ${record.orderHash} cancelled (nonce invalidated on-chain)`);
     return record;
@@ -213,7 +214,7 @@ export class ChainIndexer {
     if (record.status === nextStatus) return;
     record.status = nextStatus;
     record.updatedAt = Date.now();
-    this.store.upsert(record);
+    await this.store.upsert(record);
     this.notify(record);
     console.log(`order ${record.orderHash} → ${nextStatus} (balance ${balance}, allowance ${allowance}, needs ${needed})`);
   }
@@ -287,13 +288,13 @@ export class ChainIndexer {
         console.log(`fill for unknown, unrecoverable order ${orderHash} (tx ${fill.txHash})`);
         return;
       }
-      this.store.upsert(record);
+      await this.store.upsert(record);
     }
     if (record.status === "filled") return;
     record.status = "filled";
     record.fill = fill;
     record.updatedAt = Date.now();
-    this.store.upsert(record);
+    await this.store.upsert(record);
     this.notify(record);
     console.log(`order ${orderHash} filled via ${fill.path} (tx ${fill.txHash})`);
   }

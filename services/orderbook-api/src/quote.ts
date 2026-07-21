@@ -1,8 +1,7 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import { createPublicClient, formatUnits, http, parseAbi, parseUnits, type Address } from "viem";
-import type { ExecutableQuote, PairConfig, QuotePoint } from "@seltra/sdk";
+import type { ExecutableQuote, PairConfig } from "@seltra/sdk";
 import { config } from "./config";
+import type { OrderStore } from "./store";
 
 const routerAbi = parseAbi([
   "function quote(uint8 adapterId, address tokenIn, address tokenOut, uint256 amountIn, bytes extra) view returns (uint256 amountOut)",
@@ -23,17 +22,9 @@ export interface VenueConfig {
 export class QuoteService {
   private client = createPublicClient({ transport: http(config.rpcUrl) });
   private quotes = new Map<string, ExecutableQuote>();
-  private history = new Map<string, QuotePoint[]>();
-  private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  private timer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private readonly venues: VenueConfig[]) {
-    try {
-      const raw = JSON.parse(readFileSync(config.quoteHistoryFile, "utf8")) as Record<string, QuotePoint[]>;
-      for (const [pairId, points] of Object.entries(raw)) this.history.set(pairId, points);
-    } catch {
-      // First boot: no history yet.
-    }
-  }
+  constructor(private readonly venues: VenueConfig[], private readonly store: OrderStore) {}
 
   start() {
     if (this.venues.length === 0 || config.router === "0x0000000000000000000000000000000000000000") {
@@ -41,7 +32,13 @@ export class QuoteService {
       return;
     }
     void this.poll();
-    setInterval(() => void this.poll(), config.quotePollMs).unref();
+    this.timer = setInterval(() => void this.poll(), config.quotePollMs);
+    this.timer.unref();
+  }
+
+  stop() {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
   }
 
   get(pairId: string): ExecutableQuote | null {
@@ -49,30 +46,12 @@ export class QuoteService {
   }
 
   /** Observed quote samples, oldest first. Gaps mean no venue quoted — never interpolated. */
-  getHistory(pairId: string, fromMs?: number): QuotePoint[] {
-    const points = this.history.get(pairId) ?? [];
-    return fromMs ? points.filter((point) => point.t >= fromMs) : points;
+  getHistory(pairId: string, fromMs?: number) {
+    return this.store.getQuoteHistory(pairId, fromMs);
   }
 
   private record(pairId: string, quote: ExecutableQuote) {
-    let points = this.history.get(pairId);
-    if (!points) {
-      points = [];
-      this.history.set(pairId, points);
-    }
-    points.push({ t: quote.ts, price: quote.price });
-    // Ring buffer: ~2 days at the 10s cadence. Durable market-data storage is item 8.
-    if (points.length > config.quoteHistoryMax) points.splice(0, points.length - config.quoteHistoryMax);
-    if (this.persistTimer) return;
-    this.persistTimer = setTimeout(() => {
-      this.persistTimer = null;
-      try {
-        mkdirSync(dirname(config.quoteHistoryFile), { recursive: true });
-        writeFileSync(config.quoteHistoryFile, JSON.stringify(Object.fromEntries(this.history)));
-      } catch (error) {
-        console.error("quote history persist failed", error);
-      }
-    }, 5_000);
+    return this.store.appendQuote(pairId, { t: quote.ts, price: quote.price });
   }
 
   private async poll() {
@@ -81,7 +60,7 @@ export class QuoteService {
         const quote = await this.quotePair(pair);
         if (quote) {
           this.quotes.set(pair.id, quote);
-          this.record(pair.id, quote);
+          await this.record(pair.id, quote);
         } else {
           this.quotes.delete(pair.id);
         }

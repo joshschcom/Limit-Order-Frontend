@@ -13,12 +13,13 @@ interface Client {
 export class StreamHub {
   private clients = new Set<Client>();
   private heartbeat: ReturnType<typeof setInterval>;
+  private wss: WebSocketServer;
   /** Last book broadcast per pair; diffs are computed against this. */
   private books = new Map<string, { seq: number; book: BookSnapshot }>();
 
   constructor(server: Server, private readonly store: OrderStore) {
-    const wss = new WebSocketServer({ server, path: "/stream" });
-    wss.on("connection", (socket) => {
+    this.wss = new WebSocketServer({ server, path: "/stream" });
+    this.wss.on("connection", (socket) => {
       const client: Client = { socket, channels: new Set() };
       this.clients.add(client);
       socket.on("message", (data) => this.onMessage(client, data.toString()));
@@ -59,6 +60,13 @@ export class StreamHub {
 
   get clientCount(): number {
     return this.clients.size;
+  }
+
+  close() {
+    clearInterval(this.heartbeat);
+    for (const client of this.clients) client.socket.terminate();
+    this.clients.clear();
+    this.wss.close();
   }
 
   private sendTo(client: Client, msg: ServerMsg) {

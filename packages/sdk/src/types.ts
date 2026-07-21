@@ -60,6 +60,8 @@ export interface SignedOrderJson {
 /** On-chain fill enrichment, written by the indexer from settlement events. */
 export interface FillInfo {
   path: "dex" | "p2p";
+  /** Router adapter used for a DEX fill. Absent for P2P and legacy records. */
+  adapterId?: number;
   txHash: Hex;
   blockNumber: number;
   /** Block timestamp, unix seconds. */
