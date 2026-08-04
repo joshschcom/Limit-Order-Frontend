@@ -4,17 +4,16 @@ import { AlertTriangle, ChevronDown, ExternalLink, Grid3x3, ListFilter, Loader2,
 import { useMemo, useState } from "react";
 import { formatUnits } from "viem";
 import { useAccount, usePublicClient, useReadContracts, useWriteContract } from "wagmi";
-import { GRID_CANCEL_ALL_WARNING, GridPlanError, parseDecimal, type GridManifest, type OrderRecord } from "@seltra/sdk";
+import { GRID_CANCEL_ALL_WARNING, GridPlanError, parseDecimal, type OrderRecord } from "@seltra/sdk";
 import { isWavax, pairById, defaultTradePath, seltraConfig, tokenBySymbol, type TokenConfig } from "@/config/seltra.config";
 import { erc20Abi, wavaxAbi } from "@/lib/abi";
 import { formatToken } from "@/lib/format";
 import { CANCEL_ALL, useCancelOrders } from "@/hooks/use-cancel-orders";
 import { useGridManifests } from "@/lib/grid-manifests";
+import { buildActiveGridGroups, OPEN_ORDER_STATUSES } from "@/lib/grid-groups";
 import { formatCountdown, useNowSeconds } from "@/lib/market-data";
 import { NumberText } from "@/components/number-text";
 import { displaySymbol, TokenIcon } from "@/components/token-icon";
-
-const OPEN_STATUSES = new Set(["resting", "unfillable"]);
 
 /** The maker's improvement is paid in their receive asset (quote when selling base, base when buying). */
 export function fillImprovement(order: OrderRecord): { amount: number; symbol: string } | null {
@@ -27,13 +26,6 @@ export function fillImprovement(order: OrderRecord): { amount: number; symbol: s
 }
 
 type ConfirmState = { kind: "single"; record: OrderRecord } | { kind: "all" } | { kind: "grid"; gridId: string } | null;
-
-interface GridGroup {
-  manifest: GridManifest;
-  members: OrderRecord[];
-  openCount: number;
-  filledCount: number;
-}
 
 export function OrdersTable({
   orders,
@@ -53,32 +45,16 @@ export function OrdersTable({
   const now = useNowSeconds();
   const cancels = useCancelOrders();
   const visibleOrders = useMemo(() => {
-    if (view === "open") return orders.filter((order) => OPEN_STATUSES.has(order.status));
-    if (view === "history") return orders.filter((order) => !OPEN_STATUSES.has(order.status));
+    if (view === "open") return orders.filter((order) => OPEN_ORDER_STATUSES.has(order.status));
+    if (view === "history") return orders.filter((order) => !OPEN_ORDER_STATUSES.has(order.status));
     return [];
   }, [orders, view]);
-  const openCount = useMemo(() => orders.filter((order) => OPEN_STATUSES.has(order.status)).length, [orders]);
+  const openCount = useMemo(() => orders.filter((order) => OPEN_ORDER_STATUSES.has(order.status)).length, [orders]);
   const cancelAllPhase = cancels.pending[CANCEL_ALL];
   const manifests = useGridManifests();
   // Grids are local manifests joined against the API's order records; only
   // grids with at least one known order are shown.
-  const gridGroups: GridGroup[] = useMemo(() => {
-    if (manifests.length === 0) return [];
-    const byHash = new Map(orders.map((order) => [order.orderHash.toLowerCase(), order]));
-    return manifests
-      .map((manifest) => {
-        const members = manifest.orderHashes
-          .map((hash) => byHash.get(hash.toLowerCase()))
-          .filter((order): order is OrderRecord => Boolean(order));
-        return {
-          manifest,
-          members,
-          openCount: members.filter((order) => OPEN_STATUSES.has(order.status)).length,
-          filledCount: members.filter((order) => order.status === "filled").length,
-        };
-      })
-      .filter((group) => group.members.length > 0);
-  }, [orders, manifests]);
+  const gridGroups = useMemo(() => buildActiveGridGroups(manifests, orders), [orders, manifests]);
 
   function requestCancelAll() {
     cancels.clearError();
@@ -216,7 +192,7 @@ function OrderRow({
   onCancel: () => void;
 }) {
   const pair = pairById(order.pair);
-  const isOpen = OPEN_STATUSES.has(order.status);
+  const isOpen = OPEN_ORDER_STATUSES.has(order.status);
   const countdown = isOpen ? formatCountdown(Number(order.order.expiry), now) : { label: order.status, warn: false };
   const improvement = fillImprovement(order);
   return (

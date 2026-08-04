@@ -359,12 +359,12 @@ export function PriceChart({ pairId }: { pairId: string }) {
           {quote && quote.venues.length > 0 ? (
             <div className="chart-venue-legend" aria-label="Venues quoting this pair">
               <span className="venue-legend-label">
-                Sell {quote.referenceBaseAmount ?? "1"} {displaySymbol(pair.base)}
+                DEX reference · quote size {quote.referenceBaseAmount ?? "1"} {displaySymbol(pair.base)}
                 <InfoTip>
-                  These are live router quotes to sell {quote.referenceBaseAmount ?? "one"} {displaySymbol(pair.base)} on
-                  each venue — an indicative reference, not your order&apos;s fill price. Your actual fill depends on order
-                  size and side: buys cross at a higher price, and larger orders move the price. An order can rest through
-                  this line and later fill at a different effective price.
+                  Each line is a live executable sell quote for the displayed reference size, normalized to the price of
+                  one {displaySymbol(pair.base)}. Reference sizes differ by asset to avoid unrealistic price impact. This
+                  is not an order and does not change the amount you select. Your actual fill still depends on order size,
+                  side, and available liquidity.
                 </InfoTip>
               </span>
               {quote.venues.map((venue, index) => (
