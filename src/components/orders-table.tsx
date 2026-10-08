@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ChevronDown, ExternalLink, Grid3x3, ListFilter, Loader2, WalletMinimal, WifiOff, X } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, ExternalLink, Grid3x3, ListFilter, Loader2, WalletMinimal, WifiOff, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { formatUnits } from "viem";
 import { useAccount, usePublicClient, useReadContracts, useWriteContract } from "wagmi";
@@ -10,7 +10,7 @@ import { erc20Abi, wavaxAbi } from "@/lib/abi";
 import { formatToken } from "@/lib/format";
 import { CANCEL_ALL, useCancelOrders } from "@/hooks/use-cancel-orders";
 import { useGridManifests } from "@/lib/grid-manifests";
-import { buildActiveGridGroups, OPEN_ORDER_STATUSES } from "@/lib/grid-groups";
+import { buildActiveGridGroups, buildHistoryItems, OPEN_ORDER_STATUSES, type HistoryItem } from "@/lib/grid-groups";
 import { formatCountdown, useNowSeconds } from "@/lib/market-data";
 import { NumberText } from "@/components/number-text";
 import { displaySymbol, TokenIcon } from "@/components/token-icon";
@@ -55,6 +55,18 @@ export function OrdersTable({
   // Grids are local manifests joined against the API's order records; only
   // grids with at least one known order are shown.
   const gridGroups = useMemo(() => buildActiveGridGroups(manifests, orders), [orders, manifests]);
+  // History clusters each Grid's closed children into one expandable card.
+  const historyItems = useMemo<HistoryItem[]>(() => buildHistoryItems(manifests, orders), [orders, manifests]);
+  const [expandedGrids, setExpandedGrids] = useState<ReadonlySet<string>>(new Set());
+  const shownCount = view === "history" ? historyItems.length : visibleOrders.length;
+
+  function toggleGrid(gridId: string) {
+    setExpandedGrids((current) => {
+      const next = new Set(current);
+      if (!next.delete(gridId)) next.add(gridId);
+      return next;
+    });
+  }
 
   function requestCancelAll() {
     cancels.clearError();
@@ -84,7 +96,7 @@ export function OrdersTable({
         </div>
         <div className="orders-actions">
           {isOffline ? <span className="chip stale-chip" title="Live connection lost. Showing the last known orders."><WifiOff size={11} /> stale</span> : null}
-          <span className="table-count">{visibleOrders.length} shown</span>
+          <span className="table-count">{shownCount} shown</span>
           {view === "open" ? (
             <button
               className="button outline"
@@ -134,8 +146,8 @@ export function OrdersTable({
       ) : null}
       {view === "balances" ? <BalancesPanel /> : null}
       {view !== "balances" && isLoading ? <OrdersLoading /> : null}
-      {view !== "balances" && !isLoading && visibleOrders.length === 0 ? <OrdersEmpty isConnected={isConnected} /> : null}
-      {view !== "balances" && !isLoading && visibleOrders.length > 0 ? <div className={`orders-table ${pro ? "pro" : ""}`}>
+      {view !== "balances" && !isLoading && shownCount === 0 ? <OrdersEmpty isConnected={isConnected} /> : null}
+      {view !== "balances" && !isLoading && shownCount > 0 ? <div className={`orders-table ${pro ? "pro" : ""}`}>
         <div className="orders-row header">
           <span>Pair</span>
           <span>Side</span>
@@ -147,17 +159,39 @@ export function OrdersTable({
           {pro ? <span>Hash</span> : null}
           <span />
         </div>
-        {visibleOrders.map((order) => (
-          <OrderRow
-            key={order.orderHash}
-            order={order}
-            now={now}
-            pro={pro}
-            cancelPhase={cancels.pending[order.orderHash]}
-            canCancel={cancels.canCancel}
-            onCancel={() => requestCancel(order)}
-          />
-        ))}
+        {view === "history"
+          ? historyItems.map((item) => {
+              if (item.kind === "order") {
+                return <HistoryOrderRow key={item.order.orderHash} order={item.order} now={now} pro={pro} cancels={cancels} onCancel={requestCancel} />;
+              }
+              const gridId = item.group.manifest.gridId;
+              const expanded = expandedGrids.has(gridId);
+              return (
+                <div key={`grid-${gridId}`} className="grid-history">
+                  <button
+                    className="grid-group grid-history-toggle"
+                    type="button"
+                    aria-expanded={expanded}
+                    onClick={() => toggleGrid(gridId)}
+                  >
+                    <Grid3x3 size={15} />
+                    <span className="grid-group-info">
+                      <strong>Grid {gridId.slice(2, 8)} · {item.group.manifest.pairId}</strong>
+                      <span>{gridHistorySummary(item.children, item.group.manifest.failedLevels.length)}</span>
+                    </span>
+                    <ChevronRight className={`grid-history-chevron ${expanded ? "open" : ""}`} size={15} />
+                  </button>
+                  {expanded
+                    ? item.children.map((order) => (
+                        <HistoryOrderRow key={order.orderHash} order={order} now={now} pro={pro} cancels={cancels} onCancel={requestCancel} />
+                      ))
+                    : null}
+                </div>
+              );
+            })
+          : visibleOrders.map((order) => (
+              <HistoryOrderRow key={order.orderHash} order={order} now={now} pro={pro} cancels={cancels} onCancel={requestCancel} />
+            ))}
       </div> : null}
       {confirm ? (
         <ConfirmCancelDialog
@@ -173,6 +207,40 @@ export function OrdersTable({
         />
       ) : null}
     </section>
+  );
+}
+
+function gridHistorySummary(children: OrderRecord[], neverPlaced: number): string {
+  const count = (status: OrderRecord["status"]) => children.filter((order) => order.status === status).length;
+  const parts = [`${children.length} orders`, `${count("filled")} filled`];
+  if (count("cancelled") > 0) parts.push(`${count("cancelled")} cancelled`);
+  if (count("expired") > 0) parts.push(`${count("expired")} expired`);
+  if (neverPlaced > 0) parts.push(`${neverPlaced} never placed`);
+  return parts.join(" · ");
+}
+
+function HistoryOrderRow({
+  order,
+  now,
+  pro,
+  cancels,
+  onCancel,
+}: {
+  order: OrderRecord;
+  now: number;
+  pro: boolean;
+  cancels: ReturnType<typeof useCancelOrders>;
+  onCancel: (record: OrderRecord) => void;
+}) {
+  return (
+    <OrderRow
+      order={order}
+      now={now}
+      pro={pro}
+      cancelPhase={cancels.pending[order.orderHash]}
+      canCancel={cancels.canCancel}
+      onCancel={() => onCancel(order)}
+    />
   );
 }
 

@@ -4541,6 +4541,34 @@ button:disabled {
   background: var(--bg-raised);
 }
 
+.grid-history-toggle {
+  width: 100%;
+  margin-bottom: 4px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.grid-history-toggle:hover {
+  border-color: var(--border-strong);
+}
+
+.grid-history-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.grid-history-chevron {
+  flex-shrink: 0;
+  color: var(--text-2);
+  transition: transform 120ms ease;
+}
+
+.grid-history-chevron.open {
+  transform: rotate(90deg);
+}
+
 .grid-group > svg {
   color: var(--accent);
   flex-shrink: 0;
