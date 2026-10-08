@@ -35,12 +35,13 @@ export function OrderForm({ machine: m, midPrice }: { machine: OrderEntryMachine
           <div>
             <p className="eyebrow">Order entry</p>
             <h2>
-              Grid bot{" "}
+              Strategy bot{" "}
               <InfoTip>
                 A grid places a ladder of limit orders across your price range: buys below the current price, sells
                 above it. When the market crosses a level, that order fills once at its price or better. Filled levels
                 stay filled — nothing is re-placed automatically. Every level is a normal gasless Seltra limit order,
-                signed individually in your wallet, and you can cancel any of them at any time.
+                signed individually in your wallet, and you can cancel any of them at any time. A Martingale ladder is
+                buys only, with each deeper level larger by a multiplier you choose; it places no automatic sell.
               </InfoTip>
             </h2>
           </div>

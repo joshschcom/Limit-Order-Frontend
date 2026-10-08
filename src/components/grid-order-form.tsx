@@ -152,6 +152,7 @@ function MartingaleConfigForm({ g }: { g: GridOrderMachine }) {
             <input value={g.levels} onChange={(event) => g.setLevels(event.target.value)} inputMode="numeric" />
             <span>levels</span>
           </div>
+          <small className="field-hint">How many buy orders to place.</small>
         </label>
         <label className="field">
           <span className="field-label">Multiplier <small>{MARTINGALE_MIN_MULTIPLIER}–{MARTINGALE_MAX_MULTIPLIER}</small></span>
