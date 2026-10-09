@@ -4533,12 +4533,56 @@ button:disabled {
 
 .grid-group {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   background: var(--bg-raised);
+}
+
+.take-profit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 100%;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.take-profit-summary,
+.take-profit-preview {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 0.72rem;
+}
+
+.take-profit-summary strong,
+.take-profit-preview strong {
+  color: var(--text-1);
+}
+
+.take-profit-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.take-profit-mode {
+  width: auto;
+}
+
+.take-profit-input {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.take-profit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .grid-history-toggle {

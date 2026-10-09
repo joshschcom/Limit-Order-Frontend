@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, CheckCircle2, ChevronDown, Loader2, PenLine, ShieldCheck, Wallet } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { formatToken } from "@/lib/format";
 import { HIGH_SLIPPAGE_BPS, validateCustomSlippagePercent } from "@/lib/order-validation";
 import type { OrderEntryMachine } from "@/hooks/use-order-entry-machine";
@@ -14,11 +14,23 @@ import { isWavax, pairHasWavaxLeg, seltraConfig } from "@/config/seltra.config";
 
 const SLIPPAGE_PRESET_BPS = [10, 50, 100];
 
-export function OrderForm({ machine: m, midPrice }: { machine: OrderEntryMachine; midPrice?: number }) {
+export function OrderForm({
+  machine: m,
+  midPrice,
+  limitFormSignal = 0,
+}: {
+  machine: OrderEntryMachine;
+  midPrice?: number;
+  /** Increments to bring the plain limit form back to the front (e.g. a prefilled take-profit sell). */
+  limitFormSignal?: number;
+}) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   // Grid is a batch flow with its own machine; the tab is local so the
   // single-order machine stays untouched while it is open.
   const [gridOpen, setGridOpen] = useState(false);
+  useEffect(() => {
+    if (limitFormSignal > 0) setGridOpen(false);
+  }, [limitFormSignal]);
   const { pair, base, quote, makerAsset, takerAsset, state } = m;
   const setQuickPrice = (factor: number) => {
     if (midPrice) m.setPrice((midPrice * factor).toFixed(pair.pricePrecision));
@@ -35,12 +47,13 @@ export function OrderForm({ machine: m, midPrice }: { machine: OrderEntryMachine
           <div>
             <p className="eyebrow">Order entry</p>
             <h2>
-              Grid bot{" "}
+              Strategy bot{" "}
               <InfoTip>
                 A grid places a ladder of limit orders across your price range: buys below the current price, sells
                 above it. When the market crosses a level, that order fills once at its price or better. Filled levels
                 stay filled — nothing is re-placed automatically. Every level is a normal gasless Seltra limit order,
-                signed individually in your wallet, and you can cancel any of them at any time.
+                signed individually in your wallet, and you can cancel any of them at any time. A Martingale ladder is
+                buys only, with each deeper level larger by a multiplier you choose; it places no automatic sell.
               </InfoTip>
             </h2>
           </div>

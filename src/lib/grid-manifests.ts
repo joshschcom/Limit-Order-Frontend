@@ -38,6 +38,11 @@ export function saveGridManifest(manifest: GridManifest): void {
   }
 }
 
+/** Hides a Martingale ladder's take-profit prompt. Local UI state only; no order is touched. */
+export function dismissTakeProfit(manifest: GridManifest): void {
+  saveGridManifest({ ...manifest, takeProfitDismissed: true });
+}
+
 /** Manifests for the connected wallet, refreshed on save and cross-tab storage events. */
 export function useGridManifests(): GridManifest[] {
   const { address } = useAccount();

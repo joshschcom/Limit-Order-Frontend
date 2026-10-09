@@ -32,6 +32,7 @@ import {
   normalizeGridReason,
   normalizeDecimalInput,
   planGrid,
+  planMartingale,
   requiredGridApprovals,
   submitGridOrders,
   typedDataForSigning,
@@ -74,7 +75,13 @@ export const GRID_BASE_EXPIRY_PRESETS = [
   { label: "30d", seconds: 2_592_000 },
 ] as const;
 
+export type GridStrategy = "grid" | "martingale";
+
+export const MARTINGALE_DEFAULT_MULTIPLIER = "1.5";
+export const MARTINGALE_DEFAULT_LEVELS = "5";
+
 export interface GridOrderMachine {
+  strategy: GridStrategy;
   pair: PairConfig;
   base: TokenConfig;
   quote: TokenConfig;
@@ -85,6 +92,9 @@ export interface GridOrderMachine {
   setUpperPrice: (value: string) => void;
   levels: string;
   setLevels: (value: string) => void;
+  /** Martingale only: size multiplier between consecutive levels, user-chosen. */
+  multiplier: string;
+  setMultiplier: (value: string) => void;
   baseBudget: string;
   setBaseBudget: (value: string) => void;
   quoteBudget: string;
@@ -140,7 +150,12 @@ export interface GridOrderMachine {
   switchNetwork: () => void;
 }
 
-export function useGridOrderMachine(params: { pairId: string; referencePrice?: number }): GridOrderMachine {
+export function useGridOrderMachine(params: {
+  pairId: string;
+  referencePrice?: number;
+  strategy?: GridStrategy;
+}): GridOrderMachine {
+  const strategy = params.strategy ?? "grid";
   const pair = pairById(params.pairId);
   const base = tokenBySymbol(pair.base);
   const quote = tokenBySymbol(pair.quote);
@@ -154,6 +169,7 @@ export function useGridOrderMachine(params: { pairId: string; referencePrice?: n
   const [lowerPrice, setLowerPriceRaw] = useState("");
   const [upperPrice, setUpperPriceRaw] = useState("");
   const [levels, setLevelsRaw] = useState("6");
+  const [multiplier, setMultiplierRaw] = useState(MARTINGALE_DEFAULT_MULTIPLIER);
   const [baseBudget, setBaseBudgetRaw] = useState("");
   const [quoteBudget, setQuoteBudgetRaw] = useState("");
   const [expirySeconds, setExpirySecondsRaw] = useState<number>(
@@ -168,7 +184,11 @@ export function useGridOrderMachine(params: { pairId: string; referencePrice?: n
   const { wrap: wrapAvax, estimateGasReserve, error: wrapError, reset: resetWrap } = useAvaxWrap();
 
   // A grid pair has at most one WAVAX leg; native AVAX can only ever fund that one.
-  const wavaxLeg: "base" | "quote" | null = isWavax(base) ? "base" : isWavax(quote) ? "quote" : null;
+  // A Martingale ladder only spends the quote token, so only a WAVAX quote can be funded.
+  const wavaxLeg: "base" | "quote" | null =
+    strategy === "martingale"
+      ? isWavax(quote) ? "quote" : null
+      : isWavax(base) ? "base" : isWavax(quote) ? "quote" : null;
   const nativeAvaxApplicable = wavaxLeg !== null;
 
   const stopRef = useRef(false);
@@ -269,6 +289,20 @@ export function useGridOrderMachine(params: { pairId: string; referencePrice?: n
 
   function currentConfig(): GridConfig | null {
     if (!referencePrice) return null;
+    if (strategy === "martingale") {
+      return {
+        pairId: pair.id,
+        lowerPrice: lowerPrice.trim(),
+        upperPrice: referencePrice,
+        referencePrice,
+        levels: Number(levels),
+        baseBudget: "0",
+        quoteBudget: quoteBudget.trim() === "" ? "0" : quoteBudget.trim(),
+        expirySeconds,
+        strategy: "martingale",
+        multiplier: multiplier.trim(),
+      };
+    }
     return {
       pairId: pair.id,
       lowerPrice: lowerPrice.trim(),
@@ -310,7 +344,8 @@ export function useGridOrderMachine(params: { pairId: string; referencePrice?: n
     }
     let nextPlan: GridPlan;
     try {
-      nextPlan = planGrid(config, {
+      const planner = strategy === "martingale" ? planMartingale : planGrid;
+      nextPlan = planner(config, {
         baseDecimals: base.decimals,
         quoteDecimals: quote.decimals,
         pricePrecision: pair.pricePrecision,
@@ -319,11 +354,11 @@ export function useGridOrderMachine(params: { pairId: string; referencePrice?: n
       setFormError(cause instanceof GridPlanError ? cause.userMessage : normalizeGridReason(cause));
       return;
     }
-    if (baseBalance === undefined || quoteBalance === undefined) {
+    if (quoteBalance === undefined || (strategy === "grid" && baseBalance === undefined)) {
       setFormError("Wallet balances unavailable. Check your RPC connection and try again.");
       return;
     }
-    if (nextPlan.requiredBase > (effectiveBaseAvailable ?? baseBalance)) {
+    if (strategy === "grid" && baseBalance !== undefined && nextPlan.requiredBase > (effectiveBaseAvailable ?? baseBalance)) {
       setFormError(
         wavaxLeg === "base" && useNativeAvax
           ? `Base budget exceeds your ${base.symbol} balance plus wrappable AVAX`
@@ -565,6 +600,7 @@ export function useGridOrderMachine(params: { pairId: string; referencePrice?: n
     state.tag === "submitting";
 
   return {
+    strategy,
     pair,
     base,
     quote,
@@ -574,6 +610,8 @@ export function useGridOrderMachine(params: { pairId: string; referencePrice?: n
     setUpperPrice: editDecimalField(setUpperPriceRaw),
     levels,
     setLevels: editField(setLevelsRaw),
+    multiplier,
+    setMultiplier: editDecimalField(setMultiplierRaw),
     baseBudget,
     setBaseBudget: editDecimalField(setBaseBudgetRaw),
     quoteBudget,

@@ -1,6 +1,6 @@
 ---
 title: "App Trading Guide"
-description: "How the Seltra app maps Limit, Market, and Grid orders onto the underlying protocol, and how native AVAX funding works."
+description: "How the Seltra app maps Limit, Market, Grid, and Martingale orders onto the underlying protocol, and how native AVAX funding works."
 section: "Concepts"
 order: 9
 ---
@@ -17,6 +17,16 @@ These are two different concepts, and the app labels them differently on purpose
 ### Custom expiry
 
 Limit and Grid orders share one expiry control: pick a preset or **Custom**, entered in days (decimals allowed, e.g. `0.5` for 12 hours). The maximum is derived from the deployment's configured policy — **7 days (604,800 seconds) at mainnet launch** — and is never silently clamped: an over-limit value shows an inline error and blocks Review/Preview until it's fixed. The computed expiry date and time is shown under the field. Market orders are exempt — they always expire in 10 minutes.
+
+### Martingale ladder
+
+The **Martingale** tab places a finite, **buy-only** ladder: several limit buys spread evenly from just under the live reference price down to a **lowest buy price** you choose, where each deeper level is a **multiplier** times larger than the one above it. You choose the level count (2–20), the multiplier (1.01–10, two decimals), the expiry, and the total budget in the quote token. Out-of-range values show an inline error — they are never clamped — and the budget is split across levels in exact integer units that sum to your budget.
+
+It is built from the same parts as a Grid. Every level is an independent, one-shot, all-or-nothing limit order with its own wallet signature; the only approval is the one-time Permit2 approval for the quote token. Nothing reacts to fills: the ladder does not replenish and **never places a sell on its own**. Filled levels stay filled, and unfilled levels expire with the shared expiry.
+
+**Take-profit is one click, not automatic.** Once any level has filled, the ladder card in Open orders shows what it bought, what it cost, and how much is still unsold, and lets you set a take-profit either as a **% gain** over your average entry or as a fixed **price**. The price must be above your average entry; the app rejects a lower value instead of adjusting it, and a percentage is rounded up so it never lands below the gain you asked for. **Prefill sell order** then fills the Limit form with a sell for the unsold amount at that price. You review it and sign it there like any other limit order, including the one-time Permit2 approval for the base token. The sell fills right away if the market is already at or above your price. The card stays until the bought amount is covered by sells or you choose **Dismiss**; dismissing only hides the prompt, and your orders stay in History. Take-profit is placed from the terminal of the ladder's own pair — the Orders page links you there.
+
+Larger buys at lower prices mean risk grows as price falls. The preview shows the depth of the lowest level, the average entry if every level fills, the rebound needed from the lowest level to reach it, and the share of your budget in the deepest order, and warns when that share is 50% or more. These figures are estimates, not guarantees. As with a Grid, **Cancel entire ladder** uses an epoch increment, which cancels every outstanding Seltra order from the wallet, not only the ladder.
 
 ### Native AVAX funding
 

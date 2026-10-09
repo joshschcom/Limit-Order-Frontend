@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { Address, Hex } from "viem";
 import {
   GRID_CANCEL_ALL_WARNING,
+  MARTINGALE_MAX_LEVELS,
   GridPlanError,
   buildGridManifest,
   buildGridOrders,
@@ -10,7 +11,10 @@ import {
   formatScaled,
   parseDecimal,
   estimateGridProfit,
+  estimateMartingale,
   planGrid,
+  planMartingale,
+  planTakeProfit,
   requiredGridApprovals,
   submitGridOrders,
   type GridConfig,
@@ -279,4 +283,137 @@ test("estimateGridProfit: guards against a single level and zero prices", () => 
   assert.equal(one.stepPct, 0);
   const zero = estimateGridProfit({ lowerPrice: "0", upperPrice: "50", referencePrice: "0", levels: 5 });
   assert.equal(zero.stepPct, 0); // reference 0 -> no divide-by-zero blowup
+});
+
+// --- Martingale ladder ---------------------------------------------------
+
+function mConfig(overrides: Partial<GridConfig> = {}): GridConfig {
+  return {
+    pairId: "sWAVAX-sUSDC",
+    lowerPrice: "30.00",
+    upperPrice: "40.00",
+    referencePrice: "40.00",
+    levels: 4,
+    baseBudget: "0",
+    quoteBudget: "150",
+    expirySeconds: 86_400,
+    multiplier: "2",
+    ...overrides,
+  };
+}
+
+test("martingale: buy-only ladder from just under reference to the lower price", () => {
+  const plan = planMartingale(mConfig(), pair);
+  // span 10.00 over 4 levels: 37.50, 35.00, 32.50, 30.00 (deepest first by index)
+  assert.deepEqual(plan.levels.map((l) => l.price), ["30.00", "32.50", "35.00", "37.50"]);
+  assert.ok(plan.levels.every((l) => l.side === "buy"));
+  assert.equal(plan.requiredBase, 0n);
+  assert.equal(plan.config.strategy, "martingale");
+  assert.deepEqual(plan, planMartingale(mConfig(), pair));
+});
+
+test("martingale: sizes follow the multiplier exactly and sum to the budget", () => {
+  const plan = planMartingale(mConfig(), pair);
+  // weights 1:2:4:8 over 150 USDC from shallowest to deepest
+  assert.deepEqual(plan.levels.map((l) => l.makingAmount), [80_000_000n, 40_000_000n, 20_000_000n, 10_000_000n]);
+  assert.equal(plan.requiredQuote, 150_000_000n);
+});
+
+test("martingale: remainder units are distributed so the sum is exact", () => {
+  const plan = planMartingale(mConfig({ multiplier: "1.37", levels: 7, quoteBudget: "100.000001" }), pair);
+  assert.equal(plan.requiredQuote, 100_000_001n);
+  const amounts = plan.levels.map((l) => l.makingAmount);
+  for (let i = 1; i < amounts.length; i++) assert.ok(amounts[i - 1] >= amounts[i]);
+});
+
+test("martingale: validates levels, multiplier, range and budget without clamping", () => {
+  const code = (overrides: Partial<GridConfig>) => {
+    try {
+      planMartingale(mConfig(overrides), pair);
+    } catch (cause) {
+      return cause instanceof GridPlanError ? cause.code : "other";
+    }
+    return "ok";
+  };
+  assert.equal(code({ levels: 1 }), "bad-levels");
+  assert.equal(code({ levels: MARTINGALE_MAX_LEVELS + 1 }), "bad-levels");
+  assert.equal(code({ multiplier: "1" }), "bad-multiplier");
+  assert.equal(code({ multiplier: "10.01" }), "bad-multiplier");
+  assert.equal(code({ multiplier: "1.505" }), "too-precise");
+  assert.equal(code({ multiplier: undefined }), "bad-number");
+  assert.equal(code({ lowerPrice: "40.00" }), "bad-range");
+  assert.equal(code({ quoteBudget: "0" }), "bad-budget");
+  assert.equal(code({ lowerPrice: "39.98", levels: 4 }), "duplicate-levels");
+  assert.equal(code({ quoteBudget: "0.000003", levels: 4, multiplier: "10" }), "zero-amount-level");
+  assert.equal(code({ multiplier: "1,5" }), "ok");
+  assert.equal(code({ multiplier: "1,234.5" }), "bad-number");
+});
+
+test("martingale: children build as ordinary quote-funded buy orders", () => {
+  const plan = planMartingale(mConfig(), pair);
+  const { built } = buildGridOrders(plan, { maker, baseAsset, quoteAsset, epoch: 0n, nowSeconds: 1_000 });
+  assert.equal(built.length, 4);
+  for (const item of built) {
+    assert.equal(item.order.makerAsset.toLowerCase(), quoteAsset.toLowerCase());
+    assert.equal(item.permit.permitted.token.toLowerCase(), quoteAsset.toLowerCase());
+  }
+  assert.equal(new Set(built.map((b) => b.order.salt)).size, 4);
+});
+
+test("martingale: display estimate reports drop, average entry and deepest share", () => {
+  const plan = planMartingale(mConfig(), pair);
+  const estimate = estimateMartingale(plan, pair);
+  assert.equal(estimate.maxDropPct, 25);
+  assert.ok(estimate.averageEntry > 30 && estimate.averageEntry < 37.5);
+  assert.ok(estimate.breakEvenFromLowPct > 0);
+  assert.ok(Math.abs(estimate.deepestSharePct - (80 / 150) * 100) < 1e-9);
+});
+
+// --- Martingale take-profit ----------------------------------------------
+
+const tpPosition = {
+  // 2 base bought for 70 quote => average entry 35.00
+  spentQuote: 70_000_000n,
+  receivedBase: 2_000_000_000_000_000_000n,
+  sellBase: 2_000_000_000_000_000_000n,
+};
+
+test("take-profit: percentage gain rounds the price up from the exact average entry", () => {
+  const draft = planTakeProfit(tpPosition, { mode: "percent", value: "10" }, pair);
+  assert.equal(draft.averageEntry, "35.00");
+  assert.equal(draft.price, "38.50");
+  assert.equal(draft.amount, 2_000_000_000_000_000_000n);
+  const odd = planTakeProfit(tpPosition, { mode: "percent", value: "0.01" }, pair);
+  assert.equal(odd.price, "35.01"); // 35.0035 rounded up, never below the requested gain
+});
+
+test("take-profit: fixed price must beat the average entry", () => {
+  assert.equal(planTakeProfit(tpPosition, { mode: "price", value: "36,5" }, pair).price, "36.50");
+  const code = (value: string) => {
+    try {
+      planTakeProfit(tpPosition, { mode: "price", value }, pair);
+    } catch (cause) {
+      return cause instanceof GridPlanError ? cause.code : "other";
+    }
+    return "ok";
+  };
+  assert.equal(code("35.00"), "below-entry");
+  assert.equal(code("20"), "below-entry");
+  assert.equal(code("36.001"), "too-precise");
+  assert.equal(code("abc"), "bad-number");
+});
+
+test("take-profit: rejects zero gain, empty positions and nothing left to sell", () => {
+  const code = (position: typeof tpPosition, value = "5") => {
+    try {
+      planTakeProfit(position, { mode: "percent", value }, pair);
+    } catch (cause) {
+      return cause instanceof GridPlanError ? cause.code : "other";
+    }
+    return "ok";
+  };
+  assert.equal(code(tpPosition, "0"), "bad-gain");
+  assert.equal(code(tpPosition, "1.234"), "too-precise");
+  assert.equal(code({ ...tpPosition, sellBase: 0n }), "nothing-to-sell");
+  assert.equal(code({ ...tpPosition, receivedBase: 0n }), "no-fills");
 });

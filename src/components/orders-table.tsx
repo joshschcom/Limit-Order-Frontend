@@ -4,15 +4,16 @@ import { AlertTriangle, ChevronDown, ChevronRight, ExternalLink, Grid3x3, ListFi
 import { useMemo, useState } from "react";
 import { formatUnits } from "viem";
 import { useAccount, usePublicClient, useReadContracts, useWriteContract } from "wagmi";
-import { GRID_CANCEL_ALL_WARNING, GridPlanError, parseDecimal, type OrderRecord } from "@seltra/sdk";
+import { GRID_CANCEL_ALL_WARNING, GridPlanError, parseDecimal, type GridManifest, type OrderRecord } from "@seltra/sdk";
 import { isWavax, pairById, defaultTradePath, seltraConfig, tokenBySymbol, type TokenConfig } from "@/config/seltra.config";
 import { erc20Abi, wavaxAbi } from "@/lib/abi";
 import { formatToken } from "@/lib/format";
 import { CANCEL_ALL, useCancelOrders } from "@/hooks/use-cancel-orders";
 import { useGridManifests } from "@/lib/grid-manifests";
-import { buildActiveGridGroups, buildHistoryItems, OPEN_ORDER_STATUSES, type HistoryItem } from "@/lib/grid-groups";
+import { awaitingTakeProfit, buildActiveGridGroups, buildHistoryItems, OPEN_ORDER_STATUSES, type HistoryItem } from "@/lib/grid-groups";
 import { formatCountdown, useNowSeconds } from "@/lib/market-data";
 import { NumberText } from "@/components/number-text";
+import { TakeProfitPanel, type TakeProfitHandler } from "@/components/take-profit-panel";
 import { displaySymbol, TokenIcon } from "@/components/token-icon";
 
 /** The maker's improvement is paid in their receive asset (quote when selling base, base when buying). */
@@ -33,12 +34,15 @@ export function OrdersTable({
   isOffline = false,
   isConnected = false,
   pro = false,
+  takeProfit,
 }: {
   orders: OrderRecord[];
   isLoading?: boolean;
   isOffline?: boolean;
   isConnected?: boolean;
   pro?: boolean;
+  /** Where "Prefill sell order" sends a Martingale take-profit; without it the panel links to the pair's terminal. */
+  takeProfit?: TakeProfitHandler;
 }) {
   const [view, setView] = useState<"open" | "history" | "balances">("open");
   const [confirm, setConfirm] = useState<ConfirmState>(null);
@@ -119,9 +123,9 @@ export function OrdersTable({
             <div key={group.manifest.gridId} className="grid-group">
               <Grid3x3 size={15} />
               <div className="grid-group-info">
-                <strong>Grid {group.manifest.gridId.slice(2, 8)} · {group.manifest.pairId}</strong>
+                <strong>{gridTitle(group.manifest)}</strong>
                 <span>
-                  {group.manifest.config.lowerPrice}–{group.manifest.config.upperPrice} · {group.members.length} orders
+                  {group.manifest.config.lowerPrice}–{group.manifest.config.upperPrice}{group.manifest.config.strategy === "martingale" ? ` · ×${group.manifest.config.multiplier}` : ""} · {group.members.length} orders
                   {" · "}{group.openCount} open · {group.filledCount} filled
                   {group.manifest.failedLevels.length > 0 ? ` · ${group.manifest.failedLevels.length} never placed` : ""}
                 </span>
@@ -137,8 +141,11 @@ export function OrdersTable({
                   }}
                 >
                   {cancelAllPhase ? <Loader2 className="spin" size={13} /> : null}
-                  Cancel entire grid
+                  {group.manifest.config.strategy === "martingale" ? "Cancel entire ladder" : "Cancel entire grid"}
                 </button>
+              ) : null}
+              {awaitingTakeProfit(group) && group.position ? (
+                <TakeProfitPanel manifest={group.manifest} position={group.position} handler={takeProfit} />
               ) : null}
             </div>
           ))}
@@ -176,7 +183,7 @@ export function OrdersTable({
                   >
                     <Grid3x3 size={15} />
                     <span className="grid-group-info">
-                      <strong>Grid {gridId.slice(2, 8)} · {item.group.manifest.pairId}</strong>
+                      <strong>{gridTitle(item.group.manifest)}</strong>
                       <span>{gridHistorySummary(item.children, item.group.manifest.failedLevels.length)}</span>
                     </span>
                     <ChevronRight className={`grid-history-chevron ${expanded ? "open" : ""}`} size={15} />
@@ -208,6 +215,10 @@ export function OrdersTable({
       ) : null}
     </section>
   );
+}
+
+function gridTitle(manifest: GridManifest): string {
+  return `${manifest.config.strategy === "martingale" ? "Martingale" : "Grid"} ${manifest.gridId.slice(2, 8)} · ${manifest.pairId}`;
 }
 
 function gridHistorySummary(children: OrderRecord[], neverPlaced: number): string {
