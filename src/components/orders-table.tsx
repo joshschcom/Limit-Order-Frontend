@@ -10,9 +10,10 @@ import { erc20Abi, wavaxAbi } from "@/lib/abi";
 import { formatToken } from "@/lib/format";
 import { CANCEL_ALL, useCancelOrders } from "@/hooks/use-cancel-orders";
 import { useGridManifests } from "@/lib/grid-manifests";
-import { buildActiveGridGroups, buildHistoryItems, OPEN_ORDER_STATUSES, type HistoryItem } from "@/lib/grid-groups";
+import { awaitingTakeProfit, buildActiveGridGroups, buildHistoryItems, OPEN_ORDER_STATUSES, type HistoryItem } from "@/lib/grid-groups";
 import { formatCountdown, useNowSeconds } from "@/lib/market-data";
 import { NumberText } from "@/components/number-text";
+import { TakeProfitPanel, type TakeProfitHandler } from "@/components/take-profit-panel";
 import { displaySymbol, TokenIcon } from "@/components/token-icon";
 
 /** The maker's improvement is paid in their receive asset (quote when selling base, base when buying). */
@@ -33,12 +34,15 @@ export function OrdersTable({
   isOffline = false,
   isConnected = false,
   pro = false,
+  takeProfit,
 }: {
   orders: OrderRecord[];
   isLoading?: boolean;
   isOffline?: boolean;
   isConnected?: boolean;
   pro?: boolean;
+  /** Where "Prefill sell order" sends a Martingale take-profit; without it the panel links to the pair's terminal. */
+  takeProfit?: TakeProfitHandler;
 }) {
   const [view, setView] = useState<"open" | "history" | "balances">("open");
   const [confirm, setConfirm] = useState<ConfirmState>(null);
@@ -139,6 +143,9 @@ export function OrdersTable({
                   {cancelAllPhase ? <Loader2 className="spin" size={13} /> : null}
                   {group.manifest.config.strategy === "martingale" ? "Cancel entire ladder" : "Cancel entire grid"}
                 </button>
+              ) : null}
+              {awaitingTakeProfit(group) && group.position ? (
+                <TakeProfitPanel manifest={group.manifest} position={group.position} handler={takeProfit} />
               ) : null}
             </div>
           ))}

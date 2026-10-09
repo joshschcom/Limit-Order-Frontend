@@ -182,7 +182,7 @@ function MartingaleConfigForm({ g }: { g: GridOrderMachine }) {
         <small className="balance-line">Available <strong className="number">{g.quoteBalance === undefined ? "-" : formatToken(g.quoteBalance, g.quote.decimals, 4)} {displaySymbol(g.quote.symbol)}</strong></small>
       </label>
       {g.wavaxLeg === "quote" ? <NativeAvaxToggle g={g} /> : null}
-      <p className="grid-note"><Grid3x3 size={14} /> Martingale ladder: {Number.isInteger(levelsCount) && levelsCount > 0 ? levelsCount : "N"} independent buy orders, each larger than the last, each needing its own wallet signature. Nothing reacts to fills and there is no automatic take-profit — you sell the {displaySymbol(g.base.symbol)} yourself.</p>
+      <p className="grid-note"><Grid3x3 size={14} /> Martingale ladder: {Number.isInteger(levelsCount) && levelsCount > 0 ? levelsCount : "N"} independent buy orders, each larger than the last, each needing its own wallet signature. Nothing reacts to fills and there is no automatic sell. Once levels fill, the ladder card in Open orders helps you set a take-profit, which you review and sign yourself.</p>
       <p className="grid-note">Size grows as price falls, so risk grows with it: if price keeps dropping, most of your budget ends up in the deepest buys, and price must recover above your average entry before you break even.</p>
       {g.formError ? <p className="form-error"><AlertTriangle size={14} /> {g.formError}</p> : null}
       {g.state.tag === "rejected" ? <p className="form-error"><AlertTriangle size={14} /> {g.state.reason}</p> : null}

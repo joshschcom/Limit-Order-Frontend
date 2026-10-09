@@ -102,6 +102,8 @@ export interface GridManifest {
   orderHashes: Hex[];
   failedLevels: { index: number; reason: string }[];
   config: GridConfig;
+  /** Martingale only: the user dismissed the take-profit prompt for this ladder (local UI state). */
+  takeProfitDismissed?: boolean;
 }
 
 /**
@@ -369,6 +371,67 @@ export function estimateGridProfit(
   const step = config.levels > 1 ? (upper - lower) / (config.levels - 1) : 0;
   const pct = (denominator: number) => (denominator > 0 ? (step / denominator) * 100 : 0);
   return { stepQuote: step, stepPct: pct(reference), profitPctLow: pct(upper), profitPctHigh: pct(lower) };
+}
+
+export type TakeProfitTarget = { mode: "price"; value: string } | { mode: "percent"; value: string };
+
+export interface TakeProfitDraft {
+  /** Base units to sell. */
+  amount: bigint;
+  /** Average entry across the filled ladder levels, at the pair's price precision. */
+  averageEntry: string;
+  /** Limit price of the take-profit sell, at the pair's price precision. */
+  price: string;
+  /** Display-only gain over the average entry. */
+  gainPct: number;
+}
+
+/**
+ * Take-profit for the filled part of a Martingale ladder. This only computes a
+ * limit price and a base amount for an ordinary V1 sell the user then signs
+ * through the normal order form — nothing here places or signs anything.
+ * Average entry is quote spent over base received (exact bigint, floored at
+ * price precision). A percentage gain is parsed to hundredths of a percent and
+ * the resulting price is rounded up, so it never lands below the requested
+ * gain. A target at or below the average entry is rejected, not adjusted.
+ */
+export function planTakeProfit(
+  position: { spentQuote: bigint; receivedBase: bigint; sellBase: bigint },
+  target: TakeProfitTarget,
+  pair: GridPairMeta,
+): TakeProfitDraft {
+  const pp = pair.pricePrecision;
+  if (position.sellBase <= 0n) throw new GridPlanError("nothing-to-sell", "There is no unsold base amount left from this ladder");
+  if (position.spentQuote <= 0n || position.receivedBase <= 0n) {
+    throw new GridPlanError("no-fills", "This ladder has no filled levels to take profit on");
+  }
+  const priceUnit = 10n ** BigInt(pp);
+  const baseUnit = 10n ** BigInt(pair.baseDecimals);
+  const quoteUnit = 10n ** BigInt(pair.quoteDecimals);
+  const average = (position.spentQuote * baseUnit * priceUnit) / (position.receivedBase * quoteUnit);
+  if (average <= 0n) throw new GridPlanError("bad-entry", "Average entry rounds to zero at this pair's price precision");
+
+  let price: bigint;
+  if (target.mode === "percent") {
+    const bps = parseDecimal(target.value, 2, "Gain");
+    if (bps <= 0n) throw new GridPlanError("bad-gain", "Gain must be above 0%");
+    const scaled = average * (10_000n + bps);
+    price = (scaled + 9_999n) / 10_000n;
+  } else {
+    price = parseDecimal(target.value, pp, "Take-profit price");
+    if (price <= average) {
+      throw new GridPlanError(
+        "below-entry",
+        `Take-profit price must be above your average entry of ${formatScaled(average, pp)}`,
+      );
+    }
+  }
+  return {
+    amount: position.sellBase,
+    averageEntry: formatScaled(average, pp),
+    price: formatScaled(price, pp),
+    gainPct: (Number(price) / Number(average) - 1) * 100,
+  };
 }
 
 /** Which Permit2 allowances fall short of the plan's aggregate budgets. */

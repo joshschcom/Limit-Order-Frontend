@@ -14,6 +14,7 @@ import {
   estimateMartingale,
   planGrid,
   planMartingale,
+  planTakeProfit,
   requiredGridApprovals,
   submitGridOrders,
   type GridConfig,
@@ -366,4 +367,53 @@ test("martingale: display estimate reports drop, average entry and deepest share
   assert.ok(estimate.averageEntry > 30 && estimate.averageEntry < 37.5);
   assert.ok(estimate.breakEvenFromLowPct > 0);
   assert.ok(Math.abs(estimate.deepestSharePct - (80 / 150) * 100) < 1e-9);
+});
+
+// --- Martingale take-profit ----------------------------------------------
+
+const tpPosition = {
+  // 2 base bought for 70 quote => average entry 35.00
+  spentQuote: 70_000_000n,
+  receivedBase: 2_000_000_000_000_000_000n,
+  sellBase: 2_000_000_000_000_000_000n,
+};
+
+test("take-profit: percentage gain rounds the price up from the exact average entry", () => {
+  const draft = planTakeProfit(tpPosition, { mode: "percent", value: "10" }, pair);
+  assert.equal(draft.averageEntry, "35.00");
+  assert.equal(draft.price, "38.50");
+  assert.equal(draft.amount, 2_000_000_000_000_000_000n);
+  const odd = planTakeProfit(tpPosition, { mode: "percent", value: "0.01" }, pair);
+  assert.equal(odd.price, "35.01"); // 35.0035 rounded up, never below the requested gain
+});
+
+test("take-profit: fixed price must beat the average entry", () => {
+  assert.equal(planTakeProfit(tpPosition, { mode: "price", value: "36,5" }, pair).price, "36.50");
+  const code = (value: string) => {
+    try {
+      planTakeProfit(tpPosition, { mode: "price", value }, pair);
+    } catch (cause) {
+      return cause instanceof GridPlanError ? cause.code : "other";
+    }
+    return "ok";
+  };
+  assert.equal(code("35.00"), "below-entry");
+  assert.equal(code("20"), "below-entry");
+  assert.equal(code("36.001"), "too-precise");
+  assert.equal(code("abc"), "bad-number");
+});
+
+test("take-profit: rejects zero gain, empty positions and nothing left to sell", () => {
+  const code = (position: typeof tpPosition, value = "5") => {
+    try {
+      planTakeProfit(position, { mode: "percent", value }, pair);
+    } catch (cause) {
+      return cause instanceof GridPlanError ? cause.code : "other";
+    }
+    return "ok";
+  };
+  assert.equal(code(tpPosition, "0"), "bad-gain");
+  assert.equal(code(tpPosition, "1.234"), "too-precise");
+  assert.equal(code({ ...tpPosition, sellBase: 0n }), "nothing-to-sell");
+  assert.equal(code({ ...tpPosition, receivedBase: 0n }), "no-fills");
 });
